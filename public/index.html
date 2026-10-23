@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Notifications Test</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+      input, select, button { padding: .55rem; margin: .2rem; } input { min-width: 180px; }
+      #status { color: #555; } #count { font-weight: 700; } li { border: 1px solid #ddd; border-radius: 6px; margin: .7rem 0; padding: .8rem; }
+      .read { opacity: .6; } .error { color: #b00020; }
+    </style>
+  </head>
+  <body>
+    <h1>Notifications</h1>
+    <p id="status">Log in to begin.</p>
+
+    <section>
+      <input id="username" placeholder="Username (e.g. alice)" value="alice" />
+      <button id="login">Log in</button>
+    </section>
+
+    <section id="controls" hidden>
+      <p>Unread: <span id="count">0</span></p>
+      <input id="title" placeholder="Notification title" value="Hello" />
+      <input id="body" placeholder="Notification body" value="This is your first notification" />
+      <select id="type"><option>INFO</option><option>WARNING</option><option>ORDER</option><option>SYSTEM</option></select>
+      <button id="create">Create notification</button>
+      <button id="load">Load notifications</button>
+    </section>
+
+    <ul id="notifications"></ul>
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const status = document.querySelector('#status');
+      const list = document.querySelector('#notifications');
+      const count = document.querySelector('#count');
+      let token = localStorage.getItem('notifications-token');
+      let socket;
+
+      function setStatus(message, isError = false) {
+        status.textContent = message;
+        status.className = isError ? 'error' : '';
+      }
+      function headers() { return { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }; }
+      function render(notification, prepend = false) {
+        const existing = document.getElementById(`notification-${notification.id}`);
+        if (existing) existing.remove();
+        const item = document.createElement('li');
+        item.id = `notification-${notification.id}`;
+        item.className = notification.read ? 'read' : '';
+        const heading = document.createElement('strong');
+        heading.textContent = `${notification.type}: ${notification.title}`;
+        const message = document.createElement('div');
+        message.textContent = notification.body;
+        const createdAt = document.createElement('small');
+        createdAt.textContent = new Date(notification.createdAt).toLocaleString();
+        item.append(heading, document.createElement('br'), message, createdAt);
+        if (!notification.read) {
+          const button = document.createElement('button');
+          button.textContent = 'Mark read';
+          button.onclick = () => markRead(notification.id);
+          item.append(document.createElement('br'), button);
+        }
+        prepend ? list.prepend(item) : list.append(item);
+      }
+      function connectSocket() {
+        socket?.disconnect();
+        socket = io({ auth: { token } });
+        socket.on('connect', () => setStatus('Connected as ' + localStorage.getItem('notifications-user')));
+        socket.on('connect_error', error => setStatus('Socket error: ' + error.message, true));
+        socket.on('notification:new', notification => render(notification, true));
+        socket.on('notification:count', data => count.textContent = data.unread);
+      }
+      async function loadNotifications() {
+        const response = await fetch('/api/notifications?limit=20', { headers: headers() });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || 'Could not load notifications');
+        list.replaceChildren(); data.notifications.forEach(notification => render(notification)); count.textContent = data.unread;
+      }
+      async function markRead(id) {
+        const response = await fetch(`/api/notifications/${id}/read`, { method: 'PATCH', headers: headers() });
+        const data = await response.json();
+        if (!response.ok) return setStatus(data.message || 'Could not mark notification as read', true);
+        await loadNotifications();
+      }
+      document.querySelector('#login').onclick = async () => {
+        try {
+          const response = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: document.querySelector('#username').value }) });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.message || 'Could not log in');
+          token = data.token; localStorage.setItem('notifications-token', token); localStorage.setItem('notifications-user', data.user.username);
+          document.querySelector('#controls').hidden = false; connectSocket(); await loadNotifications();
+        } catch (error) { setStatus(error.message, true); }
+      };
+      document.querySelector('#create').onclick = async () => {
+        try {
+          const response = await fetch('/api/notifications', { method: 'POST', headers: headers(), body: JSON.stringify({ type: document.querySelector('#type').value, title: document.querySelector('#title').value, body: document.querySelector('#body').value }) });
+          const data = await response.json(); if (!response.ok) throw new Error(data.message || 'Could not create notification');
+        } catch (error) { setStatus(error.message, true); }
+      };
+      document.querySelector('#load').onclick = () => loadNotifications().catch(error => setStatus(error.message, true));
+      if (token) { document.querySelector('#controls').hidden = false; connectSocket(); loadNotifications().catch(() => localStorage.removeItem('notifications-token')); }
+    </script>
+  </body>
+</html>
