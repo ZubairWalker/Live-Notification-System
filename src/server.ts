@@ -9,6 +9,7 @@ import { connectDatabase, disconnectDatabase } from "./db/mongo.js";
 import { authRouter } from "./routes/auth.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
 import { configureSocketServer } from "./socket/index.js";
+import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
 const server = http.createServer(app);
@@ -28,14 +29,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/notifications", createNotificationsRouter(io));
 configureSocketServer(io);
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  console.error(error);
-  if (error instanceof mongoose.Error.CastError) {
-    res.status(400).json({ message: "Invalid resource id" });
-    return;
-  }
-  res.status(500).json({ message: "Unexpected server error" });
-});
+app.use(errorHandler);
 
 const port = Number(process.env.PORT ?? 3000);
 async function start(): Promise<void> {
